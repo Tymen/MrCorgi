@@ -21,6 +21,70 @@ public class MatchScraper {
     @Autowired
     private MatchService matchService;
 
+    public String VLRGetEvents() {
+        try {
+            String url = "https://www.vlr.gg/event/1657/valorant-champions-2023";
+            StringBuilder results = new StringBuilder();
+
+            try {
+                Document document = Jsoup.connect(url).get();
+                Element bracketContainer = document.select(".bracket-container.mod-upper").first();
+
+                for (Element bracketCol : bracketContainer.select(".bracket-col")) {
+                    String bracketLabel = bracketCol.select(".bracket-col-label").text();
+
+                    // Add the bracket label with some decoration for better separation
+                    results.append("▶ **").append(bracketLabel).append("** ◀\n\n");
+
+                    for (Element bracketRow : bracketCol.select(".bracket-row")) {
+                        Element bracketItem = bracketRow.select(".bracket-item").first();
+
+                        String team1 = bracketItem.select(".bracket-item-team.mod-first .bracket-item-team-name span").text();
+                        String team1Score = bracketItem.select(".bracket-item-team.mod-first .bracket-item-team-score").text();
+
+                        String team2 = bracketItem.select(".bracket-item-team:not(.mod-first) .bracket-item-team-name span").text();
+                        String team2Score = bracketItem.select(".bracket-item-team:not(.mod-first) .bracket-item-team-score").text();
+
+                        int score1 = 0;
+                        int score2 = 0;
+
+                        try {
+                            score1 = Integer.parseInt(team1Score);
+                        } catch (NumberFormatException e) {
+                            // handle or log the error if needed
+                        }
+
+                        try {
+                            score2 = Integer.parseInt(team2Score);
+                        } catch (NumberFormatException e) {
+                            // handle or log the error if needed
+                        }
+
+
+                        // Add indicator to highlight the winning team
+                        if (score1 > score2) {
+                            team1 = "⭐ " + team1;
+                        } else if (score2 > score1) {
+                            team2 = "⭐ " + team2;
+                        } // if scores are equal, it's a tie, so no team is highlighted
+
+                        results.append(team1).append(" (").append(team1Score).append(") vs ")
+                                .append(team2).append(" (").append(team2Score).append(")").append("\n");
+                    }
+                    results.append("\n");
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+                return "Failed to fetch match results.";
+            }
+            System.out.println(results);
+            return results.toString();
+        } catch (Exception e) {
+            System.out.println(e);
+            return null;
+        }
+    }
+
     public void getUpcomingMatches() throws IOException {
         String url = "https://www.vlr.gg/event/matches/1657/valorant-champions-2023/?series_id=3264";
 

@@ -11,7 +11,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 
 @Entity
-@Table(name = "valorant_match")
+@Table(name = "valorant_matches")
 @Getter
 @Setter
 @AllArgsConstructor

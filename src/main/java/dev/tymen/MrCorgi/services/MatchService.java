@@ -24,7 +24,8 @@ public class MatchService {
 
     public List<Match> findUpcomingAndOngoingMatches() {
         LocalDateTime now = LocalDateTime.now();
-        LocalDateTime oneDayLater = now.plusDays(1);
-        return matchRepository.findUpcomingAndOngoingMatches(now, oneDayLater);
+        LocalDateTime twentyFourHoursLater = now.plusHours(24);
+        return matchRepository.findUpcomingAndOngoingMatches(now, twentyFourHoursLater);
     }
+
 }

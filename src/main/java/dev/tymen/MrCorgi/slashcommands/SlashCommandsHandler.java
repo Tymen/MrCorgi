@@ -1,8 +1,10 @@
 package dev.tymen.MrCorgi.slashcommands;
 
 import dev.tymen.MrCorgi.models.entities.User;
+import dev.tymen.MrCorgi.models.entities.Vote;
 import dev.tymen.MrCorgi.services.UserService;
 import dev.tymen.MrCorgi.services.VLR.VLRService;
+import dev.tymen.MrCorgi.services.VoteService;
 import net.dv8tion.jda.api.EmbedBuilder;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.entities.Message;
@@ -23,19 +25,23 @@ import java.util.HashSet;
 import java.util.List;
 import java.io.IOException;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Component
 public class SlashCommandsHandler extends ListenerAdapter {
     private final JDA jda;
     private final VLRService vlrService;
     private final UserService userService;
+    private final VoteService voteService;
     private Set<String> votedUsers = new HashSet<>();
 
     @Autowired
-    public SlashCommandsHandler(@Lazy JDA jda, UserService userService, VLRService vlrService) {
+    public SlashCommandsHandler(@Lazy JDA jda, UserService userService, VLRService vlrService, VoteService voteService) {
         this.jda = jda;
         this.userService = userService;
         this.vlrService = vlrService;
+        this.voteService = voteService;
     }
 
     private void initilizeSlashCommands() {
@@ -73,8 +79,6 @@ public class SlashCommandsHandler extends ListenerAdapter {
                 TextChannel channel = event.getChannel().asTextChannel();
                 channel.sendMessage("Upcoming matches in the next 24 hours").queue();
                 vlrService.sendEmbedUpcomingMatches(channel);
-                User user = new User(event.getUser().getId(), event.getUser().getName());
-                userService.create(user);
                 break;
         }
     }
@@ -100,10 +104,23 @@ public class SlashCommandsHandler extends ListenerAdapter {
     @Override
     public void onButtonInteraction(ButtonInteractionEvent event) {
         net.dv8tion.jda.api.entities.User user = event.getUser();
+        String getMatchId = null;
+        Pattern pattern = Pattern.compile("^(\\d+),");
+        Matcher matcher = pattern.matcher(event.getComponentId());
 
-        if (votedUsers.contains(user.getId())) {
+        if (matcher.find()) {
+            getMatchId = matcher.group(1);
+        }
+        assert getMatchId != null;
+
+        if (userService.findById(user.getId()).isEmpty()) {
+            User userDiscord = new User(event.getUser().getId(), event.getUser().getName());
+            userService.create(userDiscord);
+        }
+
+        if (voteService.didUserVoteForMatch(user.getId(), Integer.parseInt(getMatchId))) {
             // Notify user they've already voted
-            event.reply("You've already voted!").setEphemeral(true).queue();
+            event.reply("You've already voted for this match!").setEphemeral(true).queue();
             return;
         }
 
@@ -112,21 +129,22 @@ public class SlashCommandsHandler extends ListenerAdapter {
         String fieldName;
         String replyText;
 
-        if (event.getComponentId().equals("VOTE_PAPER_REX")) {
-            fieldName = "Voted for Paper Rex:";
-            replyText = "You voted for Paper Rex!";
-        } else if (event.getComponentId().equals("VOTE_LOUD")) {
-            fieldName = "Voted for Loud:";
-            replyText = "You voted for Loud!";
-        } else {
-            return;
-        }
+        String teamName = event.getComponent().getLabel();
+        fieldName = String.format("Voters for %s", teamName);
+        replyText = String.format("You voted for %s!", teamName);
 
-        // Update the embed field with the user's name
+        voteService.castVote(Integer.parseInt(getMatchId), event.getUser().getId(), teamName);
+
         for (int i = 0; i < embedBuilder.getFields().size(); i++) {
             MessageEmbed.Field field = embedBuilder.getFields().get(i);
             if (field.getName().equals(fieldName)) {
-                embedBuilder.getFields().set(i, new MessageEmbed.Field(fieldName, user.getAsMention(), true));
+                String existingValue = field.getValue();
+
+                // Determine if a comma is needed based on the existing content
+                String separator = existingValue.isEmpty() ? "" : ", ";
+
+                String newValue = existingValue + separator + user.getAsMention();
+                embedBuilder.getFields().set(i, new MessageEmbed.Field(fieldName, newValue, true));
                 break;
             }
         }
@@ -138,7 +156,7 @@ public class SlashCommandsHandler extends ListenerAdapter {
         votedUsers.add(user.getId());
 
         // Reply to the user to confirm their vote
-        event.reply(replyText).queue();
+        event.reply(replyText).setEphemeral(true).queue();
     }
 
     private EmbedBuilder sendEmbedResults(String results) {
