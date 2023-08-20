@@ -1,25 +1,46 @@
 package dev.tymen.MrCorgi.services.VLR;
 
+import dev.tymen.MrCorgi.models.entities.Match;
+import dev.tymen.MrCorgi.services.MatchService;
+import dev.tymen.MrCorgi.services.VLR.Matches.MatchScraper;
 import net.dv8tion.jda.api.EmbedBuilder;
 import net.dv8tion.jda.api.entities.MessageEmbed;
+import net.dv8tion.jda.api.entities.channel.Channel;
+import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
+import net.dv8tion.jda.api.interactions.components.buttons.Button;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
-import org.jsoup.select.Elements;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.ApplicationArguments;
+import org.springframework.boot.ApplicationRunner;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+
 
 import java.awt.*;
 import java.io.IOException;
-import java.time.Duration;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 
 @Service
-public class VLRService {
+public class VLRService implements ApplicationRunner {
+    @Autowired
+    private MatchService matchService;
+
+    @Autowired
+    private MatchScraper matchScraper;
+
+    private static final Logger logger = LoggerFactory.getLogger(MatchService.class);
+
+    @Override
+    public void run(ApplicationArguments args) throws Exception {
+        scrapeUpcomingMatches();
+    }
+
     public String VLRGetEvents() {
         try {
             String url = "https://www.vlr.gg/event/1657/valorant-champions-2023";
@@ -83,6 +104,7 @@ public class VLRService {
             return null;
         }
     }
+
     static class MatchupResult {
         String title;
         String team1Name;
@@ -103,55 +125,49 @@ public class VLRService {
             return title + ": " + team1Name + " (" + team1Score + ") vs " + team2Name + " (" + team2Score + ")";
         }
     }
-    public List<MessageEmbed> getUpcomingMatches() throws IOException {
-        String url = "https://www.vlr.gg/event/matches/1657/valorant-champions-2023/?series_id=3264";
-        List<MessageEmbed> embeds = new ArrayList<>();
 
-        Document document = Jsoup.connect(url).get();
-        Elements days = document.select(".wf-label.mod-large");
+    @Scheduled(fixedRate = 90000)
+    public void scrapeUpcomingMatches() throws IOException {
+        matchScraper.getUpcomingMatches();
+        logger.info("[VLRService] Obtained new match data at {}", LocalDateTime.now());
+    }
 
-        for (Element day : days) {
-            String date = day.text().split(" ")[2] + " " + day.text().split(" ")[1] + ", " + day.text().split(" ")[3];
-            Elements matches = day.nextElementSibling().select(".wf-module-item.match-item");
+    public void sendEmbedUpcomingMatches(TextChannel channel) {
+        List<Match> getUpcomingMatches = matchService.findUpcomingAndOngoingMatches();
+        for (Match match : getUpcomingMatches) {
+            Button buttonTeam1 = Button.primary("VOTE_" + match.getTeam1Name().toUpperCase(), match.getTeam1Name());
+            Button buttonTeam2 = Button.primary("VOTE_" + match.getTeam2Name().toUpperCase(), match.getTeam2Name());
 
-            for (Element match : matches) {
-                String matchLink = "https://www.vlr.gg" + match.attr("href");
-                String matchTime = match.select(".match-item-time").text();
-                DateTimeFormatter formatter = DateTimeFormatter.ofPattern("d, MMMM, yyyy h:mm a", Locale.ENGLISH);
-                LocalDateTime matchDateTime = LocalDateTime.parse(date + " " + matchTime, formatter);
+            EmbedBuilder embed = new EmbedBuilder();
+            embed.setTitle(match.getMatchEvent(), match.getMatchLink());
 
-                String team1Name = match.select(".match-item-vs-team .match-item-vs-team-name .text-of").get(0).ownText().trim();
-                String team2Name = match.select(".match-item-vs-team .match-item-vs-team-name .text-of").get(1).ownText().trim();
+            // Match Information - Teams
+            embed.addField(":fire: " + match.getTeam1Name(), match.getTeam1Score(), true);
+            embed.addField("versus", "", true);
+            embed.addField(":fire: " + match.getTeam2Name(), match.getTeam2Score(), true);
 
-                String team1Score = match.select(".match-item-vs-team").get(0).select(".match-item-vs-team-score").text();
-                String team2Score = match.select(".match-item-vs-team").get(1).select(".match-item-vs-team-score").text();
-
-                String matchStatus = match.select(".ml-status").text();
-                String matchETA = match.select(".ml-eta").text();
-                String matchEvent = match.select(".match-item-event-series.text-of").text();
-
-                long epochSeconds = matchDateTime.atZone(ZoneId.systemDefault()).toInstant().getEpochSecond();
-                String discordTimestamp = "<t:" + epochSeconds + ":R>";
-
-                LocalDateTime now = LocalDateTime.now();
-                Duration durationBetweenNowAndMatch = Duration.between(now, matchDateTime);
-
-                if ((durationBetweenNowAndMatch.getSeconds() > 0 && durationBetweenNowAndMatch.toHours() <= 24)
-                        || matchStatus.equalsIgnoreCase("LIVE")) {
-                    EmbedBuilder embed = new EmbedBuilder();
-                    embed.setTitle(matchEvent, matchLink);
-                    embed.addField("Teams", team1Name + " (" + team1Score + ") vs " + team2Name + " (" + team2Score + ")", false);
-                    embed.addField("Time", discordTimestamp, true);
-                    embed.addField("Status", matchStatus, true);
-                    if (!matchETA.isEmpty()) {
-                        embed.addField("ETA", matchETA, true);
-                    }
-                    embed.setColor(Color.BLUE);
-
-                    embeds.add(embed.build());
-                }
+            // Time and Status
+            embed.addField("**Time:**", match.getDiscordTimestamp(), true);
+            embed.addField("**Status:**", match.getMatchStatus(), true);
+            if (!match.getMatchETA().isEmpty()) {
+                embed.addField("**ETA:**", match.getMatchETA(), true);
             }
+
+            // Blank Space for separation
+            embed.addField("\u200B", "\u200B", false);
+
+            // Call to Action for Voting
+            embed.addField(":ballot_box: **Cast Your Vote!**",
+                    "Who do you think will win? Choose a team below!",
+                    false
+            );
+
+            // Uncomment these once you have the voting retrieval working
+            // embed.addField("Voters for " + match.getTeam1Name(), getVotersForTeam(match.getId(), match.getTeam1Name()), true);
+            // embed.addField("Voters for " + match.getTeam2Name(), getVotersForTeam(match.getId(), match.getTeam2Name()), true);
+
+            embed.setColor(Color.decode("#f18535"));
+            channel.sendMessageEmbeds(embed.build()).setActionRow(buttonTeam1, buttonTeam2).queue();
         }
-        return embeds;
     }
 }
